@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
+using Kyky_pizza.Data;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -26,7 +27,9 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
         private readonly SignInManager<IdentityUser> _signInManager;
         private readonly UserManager<IdentityUser> _userManager;
         private readonly IUserStore<IdentityUser> _userStore;
+        private readonly IUserPhoneNumberStore<IdentityUser> _userPhoneNumberStore;
         private readonly IUserEmailStore<IdentityUser> _emailStore;
+        private readonly ApplicationDbContext _context;
         private readonly ILogger<RegisterModel> _logger;
         private readonly IEmailSender _emailSender;
 
@@ -35,14 +38,17 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
             IUserStore<IdentityUser> userStore,
             SignInManager<IdentityUser> signInManager,
             ILogger<RegisterModel> logger,
-            IEmailSender emailSender)
+            IEmailSender emailSender,
+            ApplicationDbContext context)
         {
             _userManager = userManager;
             _userStore = userStore;
             _emailStore = GetEmailStore();
+            _userPhoneNumberStore = GetPhoneNumberStore();
             _signInManager = signInManager;
             _logger = logger;
             _emailSender = emailSender;
+            _context = context;
         }
 
         /// <summary>
@@ -75,9 +81,9 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
             ///     directly from your code. This API may change or be removed in future releases.
             /// </summary>
             [Required]
-            [EmailAddress]
-            [Display(Name = "Email")]
-            public string Email { get; set; }
+            [Phone]
+            [Display(Name = "Phone number")]
+            public string PhoneNumber { get; set; }
 
             /// <summary>
             ///     This API supports the ASP.NET Core Identity default UI infrastructure and is not intended to be used
@@ -114,8 +120,8 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
             {
                 var user = CreateUser();
 
-                await _userStore.SetUserNameAsync(user, Input.Email, CancellationToken.None);
-                await _emailStore.SetEmailAsync(user, Input.Email, CancellationToken.None);
+                await _userStore.SetUserNameAsync(user, Input.PhoneNumber, CancellationToken.None);
+                await _userPhoneNumberStore.SetPhoneNumberAsync(user, Input.PhoneNumber, CancellationToken.None);
                 var result = await _userManager.CreateAsync(user, Input.Password);
 
                 if (result.Succeeded)
@@ -123,7 +129,7 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
                     _logger.LogInformation("User created a new account with password.");
 
                     var userId = await _userManager.GetUserIdAsync(user);
-                    var code = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+                    var code = await _userManager.GenerateChangePhoneNumberTokenAsync(user, Input.PhoneNumber);
                     code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
                     var callbackUrl = Url.Page(
                         "/Account/ConfirmEmail",
@@ -131,12 +137,14 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
                         values: new { area = "Identity", userId = userId, code = code, returnUrl = returnUrl },
                         protocol: Request.Scheme);
 
-                    await _emailSender.SendEmailAsync(Input.Email, "Confirm your email",
+                    await _emailSender.SendEmailAsync(Input.PhoneNumber, "Confirm your email",
                         $"Please confirm your account by <a href='{HtmlEncoder.Default.Encode(callbackUrl)}'>clicking here</a>.");
 
                     if (_userManager.Options.SignIn.RequireConfirmedAccount)
                     {
-                        return RedirectToPage("RegisterConfirmation", new { email = Input.Email, returnUrl = returnUrl });
+                        await _userPhoneNumberStore.SetPhoneNumberConfirmedAsync(user, true, CancellationToken.None);
+                        await _userStore.UpdateAsync(user, CancellationToken.None);
+                        return RedirectToPage("/Index");
                     }
                     else
                     {
@@ -175,6 +183,15 @@ namespace Kyky_pizza.Areas.Identity.Pages.Account
                 throw new NotSupportedException("The default UI requires a user store with email support.");
             }
             return (IUserEmailStore<IdentityUser>)_userStore;
+        }
+        
+        private IUserPhoneNumberStore<IdentityUser> GetPhoneNumberStore()
+        {
+            if (!_userManager.SupportsUserPhoneNumber)
+            {
+                throw new NotSupportedException("The default UI requires a user store with PhoneNumber support.");
+            }
+            return (IUserPhoneNumberStore<IdentityUser>)_userStore;
         }
     }
 }
